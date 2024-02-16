@@ -12,3 +12,5 @@ env_logger = "*"
 log = "*"
 shaderc = "*"
 bytemuck = { version = "*", features = [ "derive" ] }
+image = "*"
+imagesize = "0.12"

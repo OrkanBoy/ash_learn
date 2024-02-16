@@ -1,17 +1,17 @@
 use std::{ffi::CString, io::Read, mem};
 
 use ash::vk;
-use super::super::math;
 #[repr(C)]
 pub struct Vertex {
     pub position: [f32; 3],
     pub color: [f32; 3],
+    pub tex_coord: [f32; 2],
 }
 
 pub type Index = u32;
 
 // TODO: write a proc macro which annotates the vertex struct and generate the attribute descriptor
-const ATTRIB_DESCS: &[vk::VertexInputAttributeDescription] = &[
+const VERTEX_ATTRIB_DESCS: &[vk::VertexInputAttributeDescription] = &[
     vk::VertexInputAttributeDescription {
         location: 0,
         binding: 0,
@@ -22,7 +22,13 @@ const ATTRIB_DESCS: &[vk::VertexInputAttributeDescription] = &[
         location: 1,
         binding: 0,
         format: vk::Format::R32G32B32_SFLOAT,
-        offset: mem::size_of::<[f32; 3]>() as u32,
+        offset: core::mem::offset_of!(Vertex, color) as u32,
+    },
+    vk::VertexInputAttributeDescription {
+        location: 2,
+        binding: 0,
+        format: vk::Format::R32G32_SFLOAT,
+        offset: core::mem::offset_of!(Vertex, tex_coord) as u32,
     },
 ];
 
@@ -76,7 +82,7 @@ pub fn new_pipeline_and_layout(
         .build();
 
     let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder()
-        .vertex_attribute_descriptions(ATTRIB_DESCS)
+        .vertex_attribute_descriptions(VERTEX_ATTRIB_DESCS)
         .vertex_binding_descriptions(BINDING_DESCS)
         .build();
 
@@ -130,6 +136,12 @@ pub fn new_pipeline_and_layout(
         .blend_constants([0.0, 0.0, 0.0, 0.0])
         .build();
 
+    let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
+        .depth_test_enable(true)
+        .depth_write_enable(true)
+        .depth_compare_op(vk::CompareOp::GREATER)
+        .build();
+
     let layout = {
         let layout = vk::PipelineLayoutCreateInfo::builder()
             .set_layouts(&[
@@ -148,6 +160,7 @@ pub fn new_pipeline_and_layout(
         .rasterization_state(&rasterizer_create)
         .multisample_state(&multisampling_create)
         .vertex_input_state(&vertex_input_state)
+        .depth_stencil_state(&depth_stencil_state)
         .color_blend_state(&color_blending)
         .layout(layout)
         .render_pass(render_pass)

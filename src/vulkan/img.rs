@@ -1,6 +1,6 @@
 use ash::vk;
 
-pub fn new_image_and_memory(
+pub fn create_image(
     device: &ash::Device,
     physical_device_memory_properties: &vk::PhysicalDeviceMemoryProperties,
     width: u32,
@@ -49,7 +49,7 @@ pub fn new_image_and_memory(
     (image, memory)
 }
 
-pub fn new_image_view(
+pub fn create_image_view(
     device: &ash::Device,
     image: vk::Image,
     format: vk::Format,

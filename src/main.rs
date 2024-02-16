@@ -3,11 +3,13 @@ mod input;
 mod vulkan;
 mod math;
 mod camera;
+mod instance;
 
-pub const TARGET_FPS: u16 = 5; 
+pub const TARGET_FPS: u16 = 60; 
 pub const TARGET_DT: f32 = 1.0 / TARGET_FPS as f32;
 
-use ash::{extensions::ext::DebugUtils, vk::{self, DebugUtilsMessengerEXT}};
+use ash::vk;
+use math::Vector3;
 use winit::{dpi::PhysicalSize, event::{Event, KeyEvent, WindowEvent}, event_loop::{ControlFlow, EventLoop}, *};
 fn main() {
     env_logger::init();
@@ -28,6 +30,14 @@ fn main() {
 
     let instant = Instant::now();
     let mut time = 0.0;
+    let mut camera = camera::Camera::new(
+        Vector3::new(0.0, 0.0, -1.0),
+        3.0,
+        3.0 * vulkan.swapchain_extent.height as f32 / vulkan.swapchain_extent.width as f32,
+        0.1,
+        2.0,
+        2.0,
+    );
 
     let _ = event_loop.run(|event, elwt| {
         use winit::keyboard::*;
@@ -39,6 +49,8 @@ fn main() {
             } => match window_event {
                 WindowEvent::CloseRequested => elwt.exit(),
                 WindowEvent::Resized(PhysicalSize{width, height}) => {
+                    camera.height = camera.width * height as f32 / width as f32;
+
                     vulkan.swapchain_extent = vk::Extent2D {
                         width,
                         height,
@@ -65,6 +77,7 @@ fn main() {
                 _ => {}
             }
             Event::AboutToWait if vulkan.swapchain_extent.width != 0 && vulkan.swapchain_extent.height != 0 => {
+                vulkan.update_camera(&camera);
                 vulkan.draw_frame();
 
                 // framerate
@@ -77,9 +90,52 @@ fn main() {
                     time += TARGET_DT;
                 }
 
-
-                // user-input_state
+                // game logic
                 {
+                    use winit::keyboard::KeyCode::*;
+                    let w = input_state.is_key_pressed(KeyW);
+                    let a = input_state.is_key_pressed(KeyA);
+                    let s = input_state.is_key_pressed(KeyS);
+                    let d = input_state.is_key_pressed(KeyD);
+
+                    camera.update();
+
+                    let d_translation = camera.translation_speed * TARGET_DT;
+
+                    if w && !s {
+                        camera.position.x += d_translation * camera.front_x;
+                        camera.position.z += d_translation * camera.front_z;
+                    } else if !w && s {
+                        camera.position.x -= d_translation * camera.front_x;
+                        camera.position.z -= d_translation * camera.front_z;
+                    }
+
+                    if d && !a {
+                        camera.position.z -= d_translation * camera.front_x;
+                        camera.position.x += d_translation * camera.front_z;
+                    } else if !d && a {
+                        camera.position.z += d_translation * camera.front_x;
+                        camera.position.x -= d_translation * camera.front_z;
+                    }
+                    
+                    let up = input_state.is_key_pressed(ArrowUp);
+                    let down = input_state.is_key_pressed(ArrowDown);
+                    let right = input_state.is_key_pressed(ArrowRight);
+                    let left = input_state.is_key_pressed(ArrowLeft);
+
+                    let d_rotation = TARGET_DT * camera.rotation_speed;
+                    if right && !left {
+                        camera.z_x_rotation += d_rotation;
+                    } else if !right && left {
+                        camera.z_x_rotation -= d_rotation;
+                    }
+
+                    if up && !down {
+                        camera.zx_y_rotation -= d_rotation;
+                    } else if !up && down {
+                        camera.zx_y_rotation += d_rotation;
+                    }
+
                     input_state.previous_keys_pressed_bitmask = input_state.keys_pressed_bitmask;
                 }
             }

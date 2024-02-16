@@ -28,10 +28,8 @@ pub fn get_physical_device_and_queue_family_indices(
 
         let present_support = unsafe {
             surface.get_physical_device_surface_support(physical_device, index, surface_khr)
-        }
-        .unwrap();
-        if present_support
-            && (present == INVALID_INDEX || (graphics != INVALID_INDEX && graphics == present))
+        }.unwrap();
+        if present_support && (present == INVALID_INDEX || (graphics != INVALID_INDEX && graphics == present))
         {
             present = index;
         }
@@ -58,9 +56,13 @@ pub fn create_logical_device_and_queues(
             .build()
     }
 
+    let enabled_featues = vk::PhysicalDeviceFeatures::builder()
+        .sampler_anisotropy(true)
+        .build();
+
     let info = vk::DeviceCreateInfo::builder()
         .queue_create_infos(&queue_infos)
-        // .enabled_features(&physical_device_features)
+        .enabled_features(&enabled_featues)
         .enabled_extension_names(DEVICE_EXTENSION_NAMES);
 
     unsafe {
@@ -93,4 +95,35 @@ pub fn find_memory_type_index(
         }
     }
     panic!("Could not find suitable memory type");
+}
+
+pub fn find_depth_format(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+    formats: &[vk::Format],
+    tiling: vk::ImageTiling,
+    features: vk::FormatFeatureFlags,
+) -> vk::Format {
+    unsafe { 
+        match tiling {
+            vk::ImageTiling::LINEAR => {
+                for &f in formats.iter() {
+                    let props = instance.get_physical_device_format_properties(physical_device, f);
+                    if features & props.linear_tiling_features == features {
+                        return f;
+                    }
+                }
+            }
+            vk::ImageTiling::OPTIMAL => {
+                for &f in formats.iter() {
+                    let props = instance.get_physical_device_format_properties(physical_device, f);
+                    if features & props.optimal_tiling_features == features {
+                        return f;
+                    }
+                }
+            }
+            _ => {},
+        } 
+        panic!()
+    }
 }

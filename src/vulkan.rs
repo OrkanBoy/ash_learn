@@ -1,14 +1,17 @@
-use std::{ffi::c_void, mem::size_of, ptr::{null, null_mut}};
+use std::{ffi::c_void, io::BufReader, mem::size_of, ptr::{null, null_mut}};
 
 use ash::{extensions::{ext::DebugUtils, khr::{Surface, Swapchain}}, vk::{self, DebugUtilsMessengerEXT, Extent2D, SurfaceKHR}};
+use image::EncodableLayout;
+
+use crate::vulkan;
 
 use self::device::QUEUE_FAMILY_INDICES;
 use super::camera;
 const FRAMES_IN_FLIGHT: u8 = 3;
 
-pub mod init;
+mod init;
 pub mod swapchain;
-pub mod image;
+pub mod img;
 pub mod device;
 pub mod render_pass;
 pub mod pipeline;
@@ -25,6 +28,7 @@ pub struct Vulkan {
 
     device: ash::Device,
     physical_device: vk::PhysicalDevice,
+    physical_device_memory_properties: vk::PhysicalDeviceMemoryProperties,
 
     command_pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
@@ -68,6 +72,19 @@ pub struct Vulkan {
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_set: vk::DescriptorSet,
     descriptor_pool: vk::DescriptorPool,
+
+    image: vk::Image,
+    image_memory: vk::DeviceMemory,
+    image_sampler: vk::Sampler,
+    image_view: vk::ImageView,
+
+    depth_image: vk::Image,
+    depth_image_view: vk::ImageView,
+    depth_image_memory: vk::DeviceMemory,
+    depth_format: vk::Format,
+
+    instance_buffer: vk::Buffer,
+    instance_memory: vk::DeviceMemory,
 }
 
 impl Vulkan {
@@ -151,19 +168,30 @@ impl Vulkan {
         use pipeline::{Vertex, Index};
         let vertices = &[
             Vertex {
-                position: [-1.0, 1.0, 0.0],
-                color: [1.0, 0.0, 0.0],
+                position: [-0.5, 1.0, 0.0],
+                color: [0.8, 1.0, 1.0],
+                tex_coord: [0.0, 1.0],
             },
             Vertex {
-                position: [1.0, 1.0, 0.0],
+                position: [1.0, 1.0, -1.0],
                 color: [0.0, 1.0, 0.0],
+                tex_coord: [1.0, 1.0],
             },
             Vertex {
                 position: [1.0, -1.0, 0.0],
                 color: [0.0, 0.0, 1.0],
+                tex_coord: [1.0, 0.0],
+            },
+            Vertex {
+                position: [1.0, 1.0, 1.0],
+                color: [1.0, 1.0, 1.0],
+                tex_coord: [0.0, 0.0],
             },
         ];
-        let indices: &[Index] = &[0, 1, 2];
+        let indices: &[Index] = &[
+            0, 1, 2,
+            2, 3, 0,
+        ];
 
         let physical_device_memory_properties = unsafe{instance.get_physical_device_memory_properties(physical_device)};
 
@@ -185,8 +213,8 @@ impl Vulkan {
             index_buffer_size,
         );
 
-        let min_uniform_buffer_offset_alignment = unsafe{instance.get_physical_device_properties(physical_device)}.limits.min_uniform_buffer_offset_alignment;
-        let camera_buffer_stride = min_uniform_buffer_offset_alignment.max(size_of::<camera::CameraRender>() as vk::DeviceSize);
+        let physical_device_limits = unsafe{instance.get_physical_device_properties(physical_device)}.limits;
+        let camera_buffer_stride = physical_device_limits.min_uniform_buffer_offset_alignment.max(size_of::<camera::CameraRender>() as vk::DeviceSize);
         let camera_buffer_size = camera_buffer_stride * FRAMES_IN_FLIGHT as vk::DeviceSize;
         let (camera_buffer, camera_memory) = buffer::create_buffer(
             &device, 
@@ -197,19 +225,61 @@ impl Vulkan {
         );
         let camera_mapped_ptr = unsafe{device.map_memory(camera_memory, 0, camera_buffer_size, vk::MemoryMapFlags::empty()).unwrap() as *mut c_void};
 
+        // are we allocating memory for these bytes and then writing them to mapped_ptr,
+        // why not directly load these bytes into staging_mapped_ptr?
+        let image_buffer = image::open("C:/users/snick/dev/ash_learn/RayanJuned.png").unwrap().to_rgba8();
+        let image_bytes = image_buffer.as_bytes();
+        let image_size = image_bytes.len() as vk::DeviceSize;
+
+        let (image, image_memory) = img::create_image(
+            &device, 
+            &physical_device_memory_properties, 
+            image_buffer.width(), 
+            image_buffer.height(), 
+            vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED, 
+            vk::Format::R8G8B8A8_SRGB,
+            vk::ImageTiling::OPTIMAL, 
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        );
+
+        let image_view = img::create_image_view(
+            &device, 
+            image, 
+            vk::Format::R8G8B8A8_SRGB, 
+            vk::ImageAspectFlags::COLOR,
+        );
+
+        let image_sampler = unsafe{device.create_sampler(
+            &vk::SamplerCreateInfo::builder()
+                .mag_filter(vk::Filter::LINEAR)
+                .min_filter(vk::Filter::LINEAR)
+                .min_lod(0.0)
+                .max_lod(0.0)
+                .border_color(vk::BorderColor::INT_OPAQUE_BLACK)
+                .anisotropy_enable(true)
+                .max_anisotropy(physical_device_limits.max_sampler_anisotropy)
+                .unnormalized_coordinates(false)
+                .address_mode_u(vk::SamplerAddressMode::REPEAT)
+                .address_mode_v(vk::SamplerAddressMode::REPEAT)
+                .address_mode_w(vk::SamplerAddressMode::REPEAT)
+                .build(),
+            None,    
+        )}.unwrap();
+
         unsafe {
             let (staging_buffer, staging_memory) = buffer::create_buffer(
                 &device, 
                 &physical_device_memory_properties, 
                 vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
                 vk::BufferUsageFlags::TRANSFER_SRC,
-                vertex_buffer_size + index_buffer_size,
+                vertex_buffer_size + index_buffer_size + image_size,
             );
 
             {
                 let ptr = device.map_memory(staging_memory, 0, vertex_buffer_size, vk::MemoryMapFlags::empty()).unwrap();
                 (ptr as *mut Vertex).copy_from(vertices.as_ptr(), vertices.len());
                 (ptr.add(vertex_buffer_size as usize) as *mut Index).copy_from(indices.as_ptr(), indices.len());
+                (ptr.add((vertex_buffer_size + index_buffer_size) as usize) as *mut u8).copy_from(image_bytes.as_ptr(), image_bytes.len());
                 device.unmap_memory(staging_memory);
             }
 
@@ -239,6 +309,91 @@ impl Vulkan {
                 }]
             );
 
+            let stage_0 = vk::PipelineStageFlags::TOP_OF_PIPE;
+            let stage_1 = vk::PipelineStageFlags::TRANSFER;
+            let stage_2 = vk::PipelineStageFlags::FRAGMENT_SHADER;
+
+            let access_0 = vk::AccessFlags::empty();
+            let access_1 = vk::AccessFlags::TRANSFER_WRITE;
+            let access_2 = vk::AccessFlags::SHADER_READ;
+
+            let layout_0 = vk::ImageLayout::UNDEFINED;
+            let layout_1 = vk::ImageLayout::TRANSFER_DST_OPTIMAL;
+            let layout_2 = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+
+            device.cmd_pipeline_barrier(
+                command_buffer, 
+                stage_0, 
+                stage_1,
+                vk::DependencyFlags::empty(), 
+                &[], 
+                &[], 
+                &[
+                    vk::ImageMemoryBarrier::builder()
+                        .image(image)
+                        .subresource_range(vk::ImageSubresourceRange {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            base_mip_level: 0,
+                            level_count: 1,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        })
+                        .old_layout(layout_0)
+                        .new_layout(layout_1)
+                        .src_access_mask(access_0)
+                        .dst_access_mask(access_1)
+                        .build()
+                ]
+            );
+
+            device.cmd_copy_buffer_to_image(
+                command_buffer, 
+                staging_buffer, 
+                image, 
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL, 
+                &[
+                    vk::BufferImageCopy::builder()
+                        .buffer_offset(vertex_buffer_size + index_buffer_size)
+                        .image_subresource(vk::ImageSubresourceLayers {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            mip_level: 0,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        })
+                        .image_extent(vk::Extent3D {
+                            width: image_buffer.width(),
+                            height: image_buffer.height(),
+                            depth: 1,
+                        })
+                        .build()
+                ]
+            );
+
+            device.cmd_pipeline_barrier(
+                command_buffer, 
+                stage_1,
+                stage_2,
+                vk::DependencyFlags::empty(), 
+                &[], 
+                &[], 
+                &[
+                    vk::ImageMemoryBarrier::builder()
+                        .image(image)
+                        .subresource_range(vk::ImageSubresourceRange {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            base_mip_level: 0,
+                            level_count: 1,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        })
+                        .old_layout(layout_1)
+                        .new_layout(layout_2)
+                        .src_access_mask(access_1)
+                        .dst_access_mask(access_2)
+                        .build()
+                ]
+            );
+
             device.end_command_buffer(command_buffer).unwrap();
 
             device.queue_submit(
@@ -263,6 +418,12 @@ impl Vulkan {
                     .descriptor_count(1)
                     .stage_flags(vk::ShaderStageFlags::VERTEX)
                     .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                    .build(),
+                vk::DescriptorSetLayoutBinding::builder()
+                    .binding(1)
+                    .descriptor_count(1)
+                    .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                     .build()
             ]), 
             None,
@@ -275,7 +436,11 @@ impl Vulkan {
                     vk::DescriptorPoolSize {
                         ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
                         descriptor_count: 1,
-                    }
+                    },
+                    vk::DescriptorPoolSize {
+                        ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                        descriptor_count: 1,
+                    },
                 ])
             , None
         ).unwrap()};
@@ -301,17 +466,65 @@ impl Vulkan {
                                 offset: 0,
                                 // do not pass size of whole camera buffer 
                                 range: camera_buffer_stride,
+                            },
+                        ])
+                        .build(),
+                    vk::WriteDescriptorSet::builder()
+                        .dst_set(descriptor_set)
+                        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                        .dst_binding(1)
+                        .dst_array_element(0)
+                        .image_info(&[
+                            vk::DescriptorImageInfo {
+                                sampler: image_sampler,
+                                image_view,
+                                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                             }
                         ])
-                        .build()
+                        .build(),
                 ], 
                 &[],
             );
         }
+
+        let depth_format = device::find_depth_format(
+            &instance, 
+            physical_device, 
+            &[vk::Format::D32_SFLOAT, vk::Format::D32_SFLOAT_S8_UINT, vk::Format::D24_UNORM_S8_UINT], 
+            vk::ImageTiling::OPTIMAL,
+            vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,    
+        );
+
+        let (depth_image, depth_image_memory) = img::create_image(
+            &device, 
+            &physical_device_memory_properties, 
+            swapchain_extent.width, 
+            swapchain_extent.height, 
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT, 
+            depth_format, 
+            vk::ImageTiling::OPTIMAL, 
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        );
+        let depth_image_view = img::create_image_view(
+            &device, 
+            depth_image, 
+            depth_format,
+            vk::ImageAspectFlags::DEPTH, 
+        );
         
-        let render_pass = render_pass::create_render_pass(&device, surface_format.format);
+        let render_pass = render_pass::create_render_pass(
+            &device, 
+            surface_format.format, 
+            depth_format
+        );
         
-        let swapchain_framebuffers = swapchain::create_swapchain_framebuffers(&device, &swapchain_image_views, render_pass, swapchain_extent);
+        let swapchain_framebuffers = swapchain::create_swapchain_framebuffers(
+            &device, 
+            &swapchain_image_views, 
+            depth_image_view,
+            render_pass,
+            swapchain_extent,
+        );
 
         let shader_compiler = shaderc::Compiler::new().unwrap();
 
@@ -339,7 +552,7 @@ impl Vulkan {
             }
         }
 
-        Vulkan {
+        Self {
             instance,
 
             debug_utils,
@@ -350,8 +563,10 @@ impl Vulkan {
             surface_format,
 
             physical_device,
+            physical_device_memory_properties,
 
             device,
+
 
             command_pool,
             command_buffers,
@@ -394,6 +609,16 @@ impl Vulkan {
             descriptor_set_layout,
             descriptor_pool,
             descriptor_set,
+            
+            image,
+            image_memory,
+            image_sampler,
+            image_view,
+
+            depth_image,
+            depth_image_view,
+            depth_image_memory,
+            depth_format,
         }
     }
 
@@ -407,6 +632,10 @@ impl Vulkan {
     pub fn renew_swapchain(&mut self) {
         unsafe {
             self.device.device_wait_idle().unwrap();
+
+            self.device.destroy_image_view(self.depth_image_view, None);
+            self.device.free_memory(self.depth_image_memory, None);
+            self.device.destroy_image(self.depth_image, None);
 
             for i in 0..self.swapchain_image_views.len() {
                 self.device.destroy_framebuffer(self.swapchain_framebuffers[i], None);
@@ -430,11 +659,30 @@ impl Vulkan {
                 self.graphics_family_index,
                 self.present_family_index,
             );
+
+            (self.depth_image, self.depth_image_memory) = img::create_image(
+                &self.device,
+                &self.physical_device_memory_properties,
+                self.swapchain_extent.width,
+                self.swapchain_extent.height,
+                vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+                self.depth_format,
+                vk::ImageTiling::OPTIMAL,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            );
+
+            self.depth_image_view = img::create_image_view(
+                &self.device, 
+                self.depth_image, 
+                self.depth_format, 
+                vk::ImageAspectFlags::DEPTH
+            );
     
             self.swapchain_framebuffers = swapchain::create_swapchain_framebuffers(
                 &self.device, 
                 &self.swapchain_image_views, 
-                self.render_pass, 
+                self.depth_image_view,
+                self.render_pass,
                 self.swapchain_extent,
             );
         }
@@ -484,6 +732,12 @@ impl Vulkan {
                                 float32: [0.0, 0.0, 0.2, 1.0],
                             }
                         },
+                        vk::ClearValue {
+                            depth_stencil: vk::ClearDepthStencilValue {
+                                depth: 0.0,
+                                stencil: 0,
+                            }
+                        }
                     ]);
                         
                 self.device.begin_command_buffer(
@@ -547,7 +801,7 @@ impl Vulkan {
                     0, 
                     &[self.vertex_buffer], &[0]);
 
-                self.device.cmd_draw_indexed(command_buffer, 3, 1, 0, 0, 0);
+                self.device.cmd_draw_indexed(command_buffer, 6, 1, 0, 0, 0);
 
                 self.device.cmd_end_render_pass(command_buffer);
     
@@ -590,6 +844,16 @@ impl Drop for Vulkan {
     fn drop(&mut self) {
         unsafe {
             self.device.device_wait_idle().unwrap();
+
+            self.device.destroy_image_view(self.depth_image_view, None);
+            self.device.free_memory(self.depth_image_memory, None);
+            self.device.destroy_image(self.depth_image, None);
+
+            self.device.destroy_image_view(self.image_view, None);
+            self.device.destroy_sampler(self.image_sampler, None);
+            
+            self.device.free_memory(self.image_memory, None);
+            self.device.destroy_image(self.image, None);
 
             self.device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
             self.device.destroy_descriptor_pool(self.descriptor_pool, None);

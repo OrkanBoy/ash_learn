@@ -3,7 +3,8 @@ use ash::{
     vk,
 };
 
-
+// we need multiple color images for the spwachian
+// as we can have one image rendered to and one which is being presented
 pub fn create_swapchain_khr(
     swapchain_extent: &mut vk::Extent2D,
     surface: &Surface,
@@ -46,7 +47,7 @@ pub fn create_swapchain_khr(
     let swapchain_image_views = swapchain_images
         .iter()
         .map(|&image| {
-            super::image::new_image_view(
+            super::img::create_image_view(
                 device, 
                 image, 
                 surface_format.format, 
@@ -65,6 +66,7 @@ pub fn create_swapchain_khr(
 pub fn create_swapchain_framebuffers(
     device: &ash::Device,
     image_views: &[vk::ImageView],
+    depth_image_view: vk::ImageView,
     render_pass: vk::RenderPass,
     extent: vk::Extent2D,
 ) -> Vec<vk::Framebuffer> {
@@ -72,7 +74,7 @@ pub fn create_swapchain_framebuffers(
         .iter()
         .map(|&image_view| {
             let info = vk::FramebufferCreateInfo::builder()
-                .attachments(&[image_view])
+                .attachments(&[image_view, depth_image_view])
                 .render_pass(render_pass)
                 .width(extent.width)
                 .height(extent.height)
