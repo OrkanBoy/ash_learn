@@ -223,7 +223,7 @@ impl Vulkan {
 
         // are we allocating memory for these bytes and then writing them to mapped_ptr,
         // why not directly load these bytes into staging_mapped_ptr?
-        let image_buffer = image::open("C:/users/snick/dev/ash_learn/RayanJuned.png").unwrap().to_rgba8();
+        let image_buffer = image::open("C:/users/snick/dev/ash_learn/Apple.png").unwrap().to_rgba8();
         let image_bytes = image_buffer.as_bytes();
         let image_size = image_bytes.len() as vk::DeviceSize;
 
