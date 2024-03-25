@@ -3,11 +3,8 @@ use std::{ffi::c_void, io::BufReader, mem::size_of, ptr::{null, null_mut}};
 use ash::{extensions::{ext::DebugUtils, khr::{Surface, Swapchain}}, vk::{self, DebugUtilsMessengerEXT, Extent2D, SurfaceKHR}};
 use image::EncodableLayout;
 
-use crate::vulkan;
-
-use self::device::QUEUE_FAMILY_INDICES;
 use super::camera;
-const FRAMES_IN_FLIGHT: u8 = 3;
+const FRAMES_IN_FLIGHT: u8 = 2;
 
 mod init;
 pub mod swapchain;
@@ -63,6 +60,7 @@ pub struct Vulkan {
 
     index_buffer: vk::Buffer,
     index_memory: vk::DeviceMemory,
+    indices_len: u32,
 
     camera_buffer: vk::Buffer,
     camera_memory: vk::DeviceMemory,
@@ -82,9 +80,6 @@ pub struct Vulkan {
     depth_image_view: vk::ImageView,
     depth_image_memory: vk::DeviceMemory,
     depth_format: vk::Format,
-
-    instance_buffer: vk::Buffer,
-    instance_memory: vk::DeviceMemory,
 }
 
 impl Vulkan {
@@ -178,7 +173,7 @@ impl Vulkan {
                 tex_coord: [1.0, 1.0],
             },
             Vertex {
-                position: [1.0, -1.0, 0.0],
+                position: [0.0, -1.0, 0.0],
                 color: [0.0, 0.0, 1.0],
                 tex_coord: [1.0, 0.0],
             },
@@ -191,6 +186,7 @@ impl Vulkan {
         let indices: &[Index] = &[
             0, 1, 2,
             2, 3, 0,
+            1, 3, 2,
         ];
 
         let physical_device_memory_properties = unsafe{instance.get_physical_device_memory_properties(physical_device)};
@@ -600,6 +596,7 @@ impl Vulkan {
 
             index_buffer,
             index_memory,
+            indices_len: indices.len() as u32,
             
             camera_buffer,
             camera_memory,
@@ -706,7 +703,6 @@ impl Vulkan {
                 vk::Fence::null(),
             ) {
                 Ok((image_index, _)) => image_index,
-                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return,
                 Err(err) => panic!("Error acquiring image: {}", err),
             };
         
@@ -801,7 +797,7 @@ impl Vulkan {
                     0, 
                     &[self.vertex_buffer], &[0]);
 
-                self.device.cmd_draw_indexed(command_buffer, 6, 1, 0, 0, 0);
+                self.device.cmd_draw_indexed(command_buffer, self.indices_len, 1, 0, 0, 0);
 
                 self.device.cmd_end_render_pass(command_buffer);
     
@@ -829,7 +825,6 @@ impl Vulkan {
                     .image_indices(&[image_index])
                     .build();
                 match self.swapchain.queue_present(self.present_queue, &present_info) {
-                    Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return,
                     Err(err) => panic!("Error presenting: {}", err),
                     _ => {},
                 }

@@ -35,30 +35,60 @@ pub fn create_render_pass(
         layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
     };
 
-    let subpass_desc = vk::SubpassDescription::builder()
+    let subpass_0 = vk::SubpassDescription::builder()
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
         .color_attachments(&[color_attachment_ref])
         .depth_stencil_attachment(&depth_attachment_ref)
         .build();
 
-    let subpass_dep = vk::SubpassDependency {
+    let dep_ext_0 = vk::SubpassDependency {
         src_subpass: vk::SUBPASS_EXTERNAL,
         dst_subpass: 0,
-        src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
-        dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
-        src_access_mask: vk::AccessFlags::empty(),
-        dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        src_stage_mask:
+            vk::PipelineStageFlags::ALL_COMMANDS,
+        dst_stage_mask:
+            vk::PipelineStageFlags::ALL_COMMANDS,
+        src_access_mask:
+            vk::AccessFlags::COLOR_ATTACHMENT_READ |
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE |
+            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ | 
+            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        dst_access_mask: 
+            vk::AccessFlags::COLOR_ATTACHMENT_READ | 
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE |
+            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ | 
+            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
         dependency_flags: vk::DependencyFlags::empty(),
     };
 
+    let dep_0_ext = vk::SubpassDependency {
+        src_subpass: 0,
+        dst_subpass: vk::SUBPASS_EXTERNAL,
+        src_stage_mask:
+            vk::PipelineStageFlags::ALL_COMMANDS,
+        dst_stage_mask:
+            vk::PipelineStageFlags::ALL_COMMANDS,
+        src_access_mask:
+            vk::AccessFlags::COLOR_ATTACHMENT_READ |
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE |
+            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ | 
+            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        dst_access_mask: 
+            vk::AccessFlags::COLOR_ATTACHMENT_READ | 
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE |
+            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ | 
+            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        dependency_flags: vk::DependencyFlags::empty(),
+    };
+
+
     let info = vk::RenderPassCreateInfo::builder()
-        .subpasses(&[subpass_desc])
-        .dependencies(&[subpass_dep])
+        .subpasses(&[subpass_0])
         .attachments(&[color_attachment_desc, depth_attachment_desc])
+        .dependencies(&[dep_ext_0, dep_0_ext])
         .build();
 
     unsafe {
-        device.create_render_pass(&info, None)
-            .expect("Failed to create render procedure(renderpass), setup color attachments and sub procedure(subpass) dependencies")
+        device.create_render_pass(&info, None).unwrap()
     }
 }

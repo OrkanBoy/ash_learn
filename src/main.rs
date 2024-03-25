@@ -19,10 +19,11 @@ fn main() {
 
     let window = window::WindowBuilder::new()
         .with_inner_size(PhysicalSize {
-            width: 500,
-            height: 500,
+            width: 800,
+            height: 600,
         })
-        .build(&event_loop).unwrap();
+        .build(&event_loop)
+        .unwrap();
 
     let mut vulkan = vulkan::Vulkan::new(&window);
 
@@ -135,8 +136,6 @@ fn main() {
                     } else if !up && down {
                         camera.zx_y_rotation += d_rotation;
                     }
-
-                    input_state.previous_keys_pressed_bitmask = input_state.keys_pressed_bitmask;
                 }
             }
             _ => ()

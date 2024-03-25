@@ -51,7 +51,9 @@ impl Camera {
                 .translate(&(-self.position))
                 .rotate(-self.zx_y_rotation, &front_y_plane)
                 .rotate(-self.z_x_rotation, &BiVector3::new(0.0, 0.0, 1.0))
-                .scale(&Scale3::new(2.0 / self.width, 2.0 / self.height, 1.0)),
+                .scale(&Scale3::new(2.0 / self.width, 2.0 / self.height, 1.0))
+                // transform projection plane, not projection point
+                .translate(&Vector3::new(0.0, 0.0, self.near_z)), 
             near_z: self.near_z,
         }       
     }

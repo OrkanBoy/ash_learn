@@ -89,8 +89,7 @@ pub fn find_memory_type_index(
         if supported_types & (1 << i) != 0
             && available_properties.memory_types[i as usize]
                 .property_flags
-                .contains(required_properties)
-        {
+                .contains(required_properties) {
             return i;
         }
     }
